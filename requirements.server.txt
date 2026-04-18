@@ -8,5 +8,7 @@ tokenizers
 requests
 filelock
 tqdm
-opencv-python-headless
+numpy==1.23.5
+opencv-python-headless==4.8.1.78
+scikit-image==0.21.0
 psutil

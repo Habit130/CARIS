@@ -190,9 +190,14 @@ def train_one_epoch(model, optimizer, data_loader, lr_scheduler, epoch, print_fr
 
         for k, v in targets.items():
             if isinstance(v, list):
-                targets[k] = [m.cuda(non_blocking=True) for m in v]
-            else:
+                if v and all(isinstance(m, torch.Tensor) for m in v):
+                    targets[k] = [m.cuda(non_blocking=True) for m in v]
+                else:
+                    targets[k] = v
+            elif isinstance(v, torch.Tensor):
                 targets[k] = v.cuda(non_blocking=True)
+            else:
+                targets[k] = v
 
         sentences = sentences.squeeze(1) # [B, N_l]
         attentions = attentions.squeeze(1) # [B, N_l]
