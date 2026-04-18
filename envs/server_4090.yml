@@ -11,6 +11,8 @@ dependencies:
   - torchvision=0.14.1
   - pytorch-cuda=11.7
   - numpy<2
+  - intel-openmp
+  - mkl=2024.0
   - pillow
   - scipy
   - scikit-image

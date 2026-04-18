@@ -10,6 +10,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "${ENV_NAME}"
 
 pip install --upgrade pip
+conda install -y intel-openmp "mkl=2024.0"
 pip install openmim
 mim install "mmcv-full>=1.3.17,<1.5.0"
 pip install -r requirements.server.txt
