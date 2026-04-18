@@ -11,6 +11,6 @@ conda activate "${ENV_NAME}"
 
 pip install --upgrade pip
 conda install -y intel-openmp "mkl=2024.0"
-pip install openmim
-mim install "mmcv-full>=1.3.17,<1.5.0"
+pip install --no-cache-dir mmcv-full==1.4.8 \
+  -f https://download.openmmlab.com/mmcv/dist/cu113/torch1.11/index.html
 pip install -r requirements.server.txt

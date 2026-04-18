@@ -1,15 +1,15 @@
 name: caris-plantseg
 channels:
   - pytorch
-  - nvidia
   - conda-forge
   - defaults
 dependencies:
   - python=3.10
   - pip
-  - pytorch=1.13.1
-  - torchvision=0.14.1
-  - pytorch-cuda=11.7
+  - pytorch=1.11.0
+  - torchvision=0.12.0
+  - torchaudio=0.11.0
+  - cudatoolkit=11.3
   - numpy<2
   - intel-openmp
   - mkl=2024.0
