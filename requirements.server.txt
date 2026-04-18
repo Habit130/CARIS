@@ -1,0 +1,12 @@
+openmim==0.3.9
+mmdet==2.23.0
+timm
+ftfy
+regex
+pycocotools
+tokenizers
+requests
+filelock
+tqdm
+opencv-python-headless
+psutil

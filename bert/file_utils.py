@@ -47,7 +47,7 @@ try:
     USE_TF = os.environ.get("USE_TF", "AUTO").upper()
     USE_TORCH = os.environ.get("USE_TORCH", "AUTO").upper()
 
-    if USE_TF in ("1", "ON", "YES", "AUTO") and USE_TORCH not in ("1", "ON", "YES"):
+    if USE_TF in ("1", "ON", "YES", "AUTO") and USE_TORCH not in ("1", "ON", "YES") and not _torch_available:
         import tensorflow as tf
 
         assert hasattr(tf, "__version__") and int(tf.__version__[0]) >= 2
@@ -56,7 +56,7 @@ try:
     else:
         logger.info("Disabling Tensorflow because USE_TORCH is set")
         _tf_available = False
-except (ImportError, AssertionError):
+except Exception:
     _tf_available = False  # pylint: disable=invalid-name
 
 

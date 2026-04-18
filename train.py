@@ -7,10 +7,10 @@ import torch.utils.data
 from torch import nn
 import torch.backends.cudnn as cudnn
 
-from model import builder
-
 import transforms as T
 import utils
+from pretrained_assets import prepare_official_pretrained_assets
+from segmentation_metrics import aggregate_binary_metrics, batch_confusion_matrix, format_metrics, logits_to_mask, resize_logits
 
 def is_distributed():
     distributed = False
@@ -19,6 +19,15 @@ def is_distributed():
     return distributed
 
 def get_dataset(image_set, transform, args):
+    if args.dataset == 'plantseg':
+        from data.dataset_plantseg import PlantSegDataset
+        ds = PlantSegDataset(args,
+                             split=image_set,
+                             image_transforms=transform,
+                             target_transforms=None
+                             )
+        return ds, 2
+
     from data.dataset_refer_bert import ReferDataset, ReferDatasetTest
     if image_set == 'val':
         ds = ReferDatasetTest(args,
@@ -68,7 +77,7 @@ def batch_IoU(pred, gt):
 
     return iou, intersection, union
 
-def batch_evaluate(model, data_loader):
+def batch_evaluate_refer(model, data_loader):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
@@ -129,6 +138,43 @@ def batch_evaluate(model, data_loader):
 
     return 100 * mIoU, 100 * cum_I / cum_U
 
+def batch_evaluate_plantseg(model, data_loader):
+    model.eval()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Val:'
+    confusion = torch.zeros(4, device='cuda', dtype=torch.float64)
+
+    with torch.no_grad():
+        for data in metric_logger.log_every(data_loader, 100, header):
+            image, targets, sentences, attentions = data
+            image = image.cuda(non_blocking=True)
+            sentences = sentences.cuda(non_blocking=True).squeeze(1)
+            attentions = attentions.cuda(non_blocking=True).squeeze(1)
+            target = targets['mask'].cuda(non_blocking=True).long()
+
+            with torch.cuda.amp.autocast():
+                output = model(image, sentences, l_mask=attentions, resize_output=False, return_probs=True)
+
+            output = resize_logits(output, target.shape[-2:])
+            pred_mask = logits_to_mask(output)
+            confusion += torch.tensor(batch_confusion_matrix(pred_mask, target), device=confusion.device,
+                                      dtype=confusion.dtype)
+
+    torch.cuda.synchronize()
+    if is_distributed():
+        confusion = utils.all_reduce_tensor(confusion, norm=False)
+
+    tp, fp, fn, tn = confusion.tolist()
+    metrics = aggregate_binary_metrics(tp, fp, fn, tn)
+    print('Final results:')
+    print(format_metrics(metrics))
+    return metrics
+
+def batch_evaluate(model, data_loader, args):
+    if args.dataset == 'plantseg':
+        return batch_evaluate_plantseg(model, data_loader)
+    return batch_evaluate_refer(model, data_loader)
+
 def train_one_epoch(model, optimizer, data_loader, lr_scheduler, epoch, print_freq, loss_scaler, clip_grad):
     model.train()
     optimizer.zero_grad()
@@ -165,6 +211,11 @@ def train_one_epoch(model, optimizer, data_loader, lr_scheduler, epoch, print_fr
         metric_logger.update(**loss_dict)
 
 def main(args, distributed):
+    from model import builder
+
+    if args.output_dir:
+        utils.mkdir(args.output_dir)
+
     dataset, num_classes = get_dataset("train",
                                        get_transform(args=args),
                                        args=args)
@@ -193,7 +244,8 @@ def main(args, distributed):
         drop_last=True, collate_fn=utils.collate_func)
 
     data_loader_test = torch.utils.data.DataLoader(
-        dataset_test, batch_size=args.batch_size, sampler=test_sampler, num_workers=args.workers)
+        dataset_test, batch_size=args.batch_size, sampler=test_sampler, num_workers=args.workers,
+        collate_fn=utils.collate_func)
 
     # model initialization
     print(args.model)
@@ -243,11 +295,19 @@ def main(args, distributed):
             data_loader.sampler.set_epoch(epoch)
         train_one_epoch(model, optimizer, data_loader, lr_scheduler, epoch, args.print_freq, loss_scaler, clip_grad)
         if epoch % 10 == 0 or epoch >= args.epochs - 16:
-            iou, overallIoU = batch_evaluate(model, data_loader_test)
+            eval_results = batch_evaluate(model, data_loader_test, args)
 
-            print('Average object IoU {}'.format(iou))
-            print('Overall IoU {}'.format(overallIoU))
-            save_checkpoint = (best_oIoU < overallIoU)
+            if args.dataset == 'plantseg':
+                print('Validation mIoU {}'.format(eval_results['mIoU']))
+                save_checkpoint = (best_oIoU < eval_results['mIoU'])
+                current_score = eval_results['mIoU']
+            else:
+                iou, overallIoU = eval_results
+                print('Average object IoU {}'.format(iou))
+                print('Overall IoU {}'.format(overallIoU))
+                save_checkpoint = (best_oIoU < overallIoU)
+                current_score = overallIoU
+
             if save_checkpoint:
                 print('Better epoch: {}\n'.format(epoch))
                 dict_to_save = {'model': single_model.state_dict(),
@@ -256,7 +316,7 @@ def main(args, distributed):
 
                 utils.save_on_master(dict_to_save, os.path.join(args.output_dir,
                                                                 'model_best_{}.pth'.format(args.model_id)))
-                best_oIoU = overallIoU
+                best_oIoU = current_score
 
     # summarize
     total_time = time.time() - start_time
@@ -267,6 +327,7 @@ if __name__ == "__main__":
     from args import get_parser
     parser = get_parser()
     args = parser.parse_args()
+    args = prepare_official_pretrained_assets(args)
     # set up distributed learning
     distributed = is_distributed()
     if distributed:

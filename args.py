@@ -10,6 +10,8 @@ def get_parser():
     parser.add_argument('--splitBy', default='unc', help='change to umd or google when the dataset is G-Ref (RefCOCOg)')
     parser.add_argument('--refer_data_root', default=None, help='REFER dataset root directory')
     parser.add_argument('--refer_root', default=None, help='REFER annotations root directory')
+    parser.add_argument('--plantseg_root', default='../plantseg', help='plantseg dataset root directory')
+    parser.add_argument('--caption_index', default=3, type=int, help='caption index used for plantseg text')
     # General model settings
     parser.add_argument('--model', default=None, help='model: lavt, lavt_one')
     parser.add_argument('--model_id', default=None, help='name to identify the model')
@@ -56,6 +58,14 @@ def get_parser():
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N', help='number of data loading workers')
     parser.add_argument('--mix', action='store_true',
                         help='if true, use refcoco/+/g mixed dataset for training.')
+    parser.add_argument('--asset_cache_dir', default='pretrained_assets',
+                        help='directory used to cache official pretrained assets')
+    parser.add_argument('--auto_download_assets', action='store_true', default=True,
+                        help='if true, automatically download official pretrained assets when needed')
+    parser.add_argument('--disable_auto_download_assets', action='store_false', dest='auto_download_assets',
+                        help='disable automatic download of official pretrained assets')
+    parser.add_argument('--pred_mask_subdir', default='test_masks',
+                        help='sub-directory used to save predicted masks under output-dir')
     return parser
 
 if __name__ == "__main__":

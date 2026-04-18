@@ -1,10 +1,12 @@
+import os
+
 import torch
 import torch.utils.data
 from torch import nn
-
-from model import builder
 import transforms as T
 import utils
+from pretrained_assets import prepare_official_pretrained_assets
+from segmentation_metrics import aggregate_binary_metrics, batch_confusion_matrix, format_metrics, logits_to_mask, resize_logits, save_prediction_mask
 
 import numpy as np
 from PIL import Image
@@ -12,6 +14,15 @@ import torch.nn.functional as F
 
 
 def get_dataset(image_set, transform, args):
+    if args.dataset == 'plantseg':
+        from data.dataset_plantseg import PlantSegDataset
+        ds = PlantSegDataset(args,
+                      split=image_set,
+                      image_transforms=transform,
+                      target_transforms=None
+                      )
+        return ds, 2
+
     from data.dataset_refer_bert import ReferDatasetTest
     ds = ReferDatasetTest(args,
                       split=image_set,
@@ -32,7 +43,7 @@ def batch_IoU(pred, gt):
 
     return iou, intersection, union
 
-def batch_evaluate(model, data_loader):
+def batch_evaluate_refer(model, data_loader):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
@@ -83,6 +94,41 @@ def batch_evaluate(model, data_loader):
     results_str += '    overall IoU = %.2f\n' % (cum_I * 100. / cum_U)
     print(results_str)
 
+def batch_evaluate_plantseg(model, data_loader, args):
+    model.eval()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test:'
+    confusion = torch.zeros(4, device='cuda', dtype=torch.float64)
+    pred_mask_root = os.path.join(args.output_dir, args.pred_mask_subdir)
+    os.makedirs(pred_mask_root, exist_ok=True)
+
+    with torch.no_grad():
+        for data in metric_logger.log_every(data_loader, 100, header):
+            image, targets, sentences, attentions = data
+            image = image.cuda(non_blocking=True)
+            sentences = sentences.cuda(non_blocking=True).squeeze(1)
+            attentions = attentions.cuda(non_blocking=True).squeeze(1)
+            target = targets['mask'].cuda(non_blocking=True).long()
+
+            output = model(image, sentences, l_mask=attentions, resize_output=False, return_probs=True)
+            output = resize_logits(output, target.shape[-2:])
+            pred_mask = logits_to_mask(output)
+
+            confusion += torch.tensor(batch_confusion_matrix(pred_mask, target), device=confusion.device,
+                                      dtype=confusion.dtype)
+
+            for idx, mask_path in enumerate(targets['mask_path']):
+                save_prediction_mask(pred_mask[idx], os.path.join(pred_mask_root, mask_path))
+
+    torch.cuda.synchronize()
+    tp, fp, fn, tn = confusion.tolist()
+    metrics = aggregate_binary_metrics(tp, fp, fn, tn)
+    print('Final results:')
+    print(format_metrics(metrics))
+    with open(os.path.join(args.output_dir, 'test_metrics.txt'), 'w', encoding='utf-8') as f:
+        f.write(format_metrics(metrics) + '\n')
+    return metrics
+
 def get_transform(args):
     transforms = [T.Resize(args.img_size, args.img_size, eval_mode=args.eval_ori_size),
                   T.ToTensor(),
@@ -97,24 +143,36 @@ def computeIoU(pred_seg, gd_seg):
 
     return I, U
 
+def batch_evaluate(model, data_loader, args):
+    if args.dataset == 'plantseg':
+        return batch_evaluate_plantseg(model, data_loader, args)
+    return batch_evaluate_refer(model, data_loader)
+
 def main(args):
+    from model import builder
+
     device = torch.device(args.device)
     dataset_test, _ = get_dataset(args.split, get_transform(args=args), args)
     print(len(dataset_test))
     test_sampler = torch.utils.data.SequentialSampler(dataset_test)
-    data_loader_test = torch.utils.data.DataLoader(dataset_test, batch_size=8,
-                                                   sampler=test_sampler, num_workers=args.workers)
+    data_loader_test = torch.utils.data.DataLoader(dataset_test, batch_size=args.batch_size,
+                                                   sampler=test_sampler, num_workers=args.workers,
+                                                   collate_fn=utils.collate_func)
     print(args.model)
     single_model = builder.__dict__[args.model](pretrained='',args=args)
     utils.load_model(single_model, args.resume)
     model = single_model.to(device)
 
-    batch_evaluate(model, data_loader_test)
+    if not args.output_dir:
+        args.output_dir = os.path.dirname(args.resume) or '.'
+    os.makedirs(args.output_dir, exist_ok=True)
+    batch_evaluate(model, data_loader_test, args)
 
 if __name__ == "__main__":
     from args import get_parser
     parser = get_parser()
     args = parser.parse_args()
+    args = prepare_official_pretrained_assets(args)
     print('Image size: {}'.format(str(args.img_size)))
     if args.eval_ori_size:
         print('Eval mode: original')

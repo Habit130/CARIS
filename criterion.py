@@ -5,8 +5,8 @@ from torch.nn import functional as F
 class SegCELoss(nn.Module):
     def __init__(self):
         super(SegCELoss, self).__init__()
-        weight = torch.FloatTensor([0.9, 1.1]).cuda()
-        self.seg_criterion = nn.CrossEntropyLoss(weight=weight)
+        self.register_buffer('class_weight', torch.tensor([0.9, 1.1], dtype=torch.float32))
+        self.seg_criterion = nn.CrossEntropyLoss(weight=self.class_weight)
         
     def forward(self, pred, targets):
         '''

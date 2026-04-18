@@ -12,7 +12,8 @@ import os
 import sys
 from torch.utils.data.dataloader import default_collate
 from torch.optim.lr_scheduler import _LRScheduler
-from torch._six import inf
+
+inf = math.inf
 
 def all_reduce_tensor(tensor, op=dist.ReduceOp.SUM, world_size=1, norm=True):
     with torch.no_grad():
